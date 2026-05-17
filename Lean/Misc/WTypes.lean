@@ -1,6 +1,8 @@
 import Mathlib
 
--- Non indexed W-types
+------------------
+-- Non-indexed W-types
+------------------
 
 -- The data of a signature `B -> A`
 variable (A : Type) (B : A → Type)
@@ -44,6 +46,50 @@ theorem epsilon (n : Nat) : toNat (fromNat n) = n := by
   | succ n ih => simp [fromNat, s, toNat, ih]
 
 end WNat
+
+-- `List X` as a W-type.
+-- Constructors are labels `Option X`:
+--   `none`   — `nil`,  no recursive arguments
+--   `some x` — `cons x`, one recursive argument
+abbrev WList (X : Type) : Type :=
+  W (Option X) (fun a => match a with | none => Empty | some _ => Unit)
+
+namespace WList
+
+variable {X : Type}
+
+def nil : WList X := .sup none Empty.elim
+
+def cons (x : X) (xs : WList X) : WList X := .sup (some x) (fun _ => xs)
+
+def toList : WList X → List X
+  | .sup none _ => []
+  | .sup (some x) s => x :: toList (s ())
+
+def fromList : List X → WList X
+  | [] => nil
+  | x :: xs => cons x (fromList xs)
+
+theorem eta (w : WList X) : fromList (toList w) = w := by
+  induction w with
+  | sup a s ih =>
+    cases a
+    · simp only [toList, fromList, nil]
+      congr 1
+      funext x
+      exact x.elim
+    · simp only [toList, fromList, cons]
+      congr 1
+      funext u
+      cases u
+      exact ih ()
+
+theorem epsilon (l : List X) : toList (fromList l) = l := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih => simp [toList, fromList, cons, ih]
+
+end WList
 
 ------------------
 -- Indexed W-types
@@ -156,3 +202,65 @@ theorem eta {α : Type} {x y : α} (w : WId α x y) : ofEq (toEq w) = w := by
   exact b.elim
 
 end WId
+
+-- `Vector X n` as an indexed W-type.
+-- At index `0` the only constructor is `nil`, carrying no data and no recursive
+-- arguments. At index `n+1` there is one constructor per `x : X` (`cons x`),
+-- carrying one recursive argument at index `n`.
+abbrev VecA (X : Type) : Nat → Type
+  | 0 => Unit
+  | _ + 1 => X
+
+abbrev VecB (X : Type) : (j : Nat) → VecA X j → Nat → Type
+  | 0, _, _ => Empty
+  | n + 1, _, i => PLift (n = i)
+
+abbrev WVec (X : Type) : Nat → Type := IW (VecA X) (VecB X)
+
+namespace WVec
+
+variable {X : Type}
+
+def nil : WVec X 0 :=
+  .sup 0 () (fun _ b => b.elim)
+
+def cons {n : Nat} (x : X) (xs : WVec X n) : WVec X (n+1) :=
+  .sup (n+1) x (fun _ h => h.down ▸ xs)
+
+def toVec : (n : Nat) → WVec X n → List.Vector X n
+  | 0, _ => ⟨[], rfl⟩
+  | n + 1, .sup _ x s =>
+    let v := toVec n (s n (PLift.up rfl))
+    ⟨x :: v.1, by simp [v.2]⟩
+
+def ofVec : (n : Nat) → List.Vector X n → WVec X n
+  | 0, _ => nil
+  | n + 1, ⟨[], h⟩ => by simp at h
+  | n + 1, ⟨x :: xs, h⟩ => cons x (ofVec n ⟨xs, by simpa using h⟩)
+
+theorem epsilon : (n : Nat) → (v : List.Vector X n) → toVec n (ofVec n v) = v
+  | 0, ⟨[], _⟩ => rfl
+  | 0, ⟨_ :: _, h⟩ => by simp at h
+  | n + 1, ⟨[], h⟩ => by simp at h
+  | n + 1, ⟨x :: xs, h⟩ => by
+    have ih := epsilon n ⟨xs, by simpa using h⟩
+    simp [ofVec, toVec, cons, ih]
+
+theorem eta (n : Nat) (w : WVec X n) : ofVec n (toVec n w) = w := by
+  induction w with
+  | sup j a s ih =>
+    match j, a, s, ih with
+    | 0, _, _, _ =>
+      simp only [ofVec, nil]
+      congr 1
+      funext i b
+      exact b.elim
+    | n + 1, _, s, ih =>
+      simp only [toVec, ofVec, cons]
+      congr 1
+      funext i h
+      obtain ⟨heq⟩ := h
+      subst heq
+      exact ih _ (PLift.up rfl)
+
+end WVec
